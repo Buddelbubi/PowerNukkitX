@@ -308,9 +308,12 @@ public class Level implements Metadatable {
     private final Map<Long, Map<Integer, Object>> lightQueue = new ConcurrentHashMap<>(8, 0.9f, 1);
     private final int dimensionCount;
 
+    ///level tick system
+    private final Thread baseTickThread;
+    private final GameLoop baseTickLoop;
     ///sub tick system
     private final Thread subTickThread;
-    private final GameLoop gameLoop;
+    private final GameLoop subTickGameLoop;
     ///antiXray system
     private AntiXraySystem antiXraySystem;
     ///weather system
@@ -391,9 +394,17 @@ public class Level implements Metadatable {
 
         this.skyLightSubtracted = this.calculateSkylightSubtracted(1);
         final String levelName = getName();
-        gameLoop = GameLoop.builder()
+        subTickGameLoop = GameLoop.builder()
                 .onTick(this::subTick)
                 .onStop(() -> log.info(levelName + " SubTick is closed!"))
+                .loopCountPerSec(20)
+                .build();
+        baseTickLoop = GameLoop.builder()
+                .onTick(this::doTick)
+                .onStop(() -> {
+                    this.save();
+                    log.info(levelName + " BaseTick is closed!");
+                })
                 .loopCountPerSec(20)
                 .build();
         this.subTickThread = new Thread() {
@@ -403,10 +414,23 @@ public class Level implements Metadatable {
 
             @Override
             public void run() {
-                gameLoop.startLoop();
+                subTickGameLoop.startLoop();
             }
         };
         this.subTickThread.start();
+        this.baseTickThread = new Thread() {
+            {
+                setName("Level " + Level.this.getName() + " BaseTick Thread");
+            }
+
+            @Override
+            public void run() {
+                baseTickLoop.startLoop();
+            }
+        };
+        if(this.getServer().getSettings().levelSettings().levelThread()) {
+            this.baseTickThread.start();
+        }
     }
 
     public static boolean canRandomTick(String blockId) {
@@ -569,7 +593,8 @@ public class Level implements Metadatable {
     }
 
     public void close() {
-        this.gameLoop.stop();
+        this.subTickGameLoop.stop();
+        if(this.baseTickLoop.isRunning()) this.baseTickLoop.stop();
         LevelProvider levelProvider = this.provider.get();
         if (levelProvider != null) {
             if (this.getAutoSave()) {
@@ -934,9 +959,9 @@ public class Level implements Metadatable {
         }
     }
 
-    public void doTick(int currentTick) {
+    public void doTick(GameLoop gameLoop) {
         requireProvider();
-
+        int currentTick = gameLoop.getTick();
         try {
             updateBlockLight(lightQueue);
             this.checkTime();
