@@ -17,15 +17,19 @@ import java.util.function.Consumer;
 @Slf4j
 public final class GameLoop {
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
+    @Getter
+    private long nextTick;
     private final Runnable onStart;
     private final Consumer<GameLoop> onTick;
     private final Runnable onStop;
     @Getter
     private final int loopCountPerSec;
+    @Getter
     private final float[] tickSummary = new float[20];
+    @Getter
     private final float[] MSPTSummary = new float[20];
     @Getter
-    private long tick;
+    private int tick;
 
     private GameLoop(Runnable onStart, Consumer<GameLoop> onTick, Runnable onStop, int loopCountPerSec) {
         if (loopCountPerSec <= 0)
@@ -34,6 +38,7 @@ public final class GameLoop {
         this.onTick = onTick;
         this.onStop = onStop;
         this.loopCountPerSec = loopCountPerSec;
+        this.nextTick = -1;
         Arrays.fill(tickSummary, 20f);
         Arrays.fill(MSPTSummary, 0f);
     }
@@ -68,6 +73,7 @@ public final class GameLoop {
         onStart.run();
         long nanoSleepTime = 0;
         long idealNanoSleepPerTick = 1000000000 / loopCountPerSec;
+        this.nextTick = System.currentTimeMillis();
         while (isRunning.get()) {
             // Figure out how long it took to tick
             long startTickTime = System.nanoTime();
@@ -76,7 +82,12 @@ public final class GameLoop {
             long timeTakenToTick = System.nanoTime() - startTickTime;
             updateMSTP(timeTakenToTick, MSPTSummary);
             updateTPS(timeTakenToTick);
-
+            long tickTimeMillis = TimeUnit.NANOSECONDS.toMillis(timeTakenToTick);
+            if ((this.nextTick - tickTimeMillis) < -1000) {
+                this.nextTick = tickTimeMillis;
+            } else {
+                this.nextTick += 50;
+            }
             long sumOperateTime = System.nanoTime() - startTickTime;
             // Sleep for the ideal time but take into account the time spent running the tick
             nanoSleepTime += idealNanoSleepPerTick - sumOperateTime;
